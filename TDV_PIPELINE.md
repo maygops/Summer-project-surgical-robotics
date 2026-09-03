@@ -159,9 +159,16 @@ discriminative/variance terms dominate the gradient at the expense of real
 temporal correspondence. Both weights need tuning relative to the observed
 scale of `pred_loss` on your data.
 
-### Optional backbone unfreezing
+### Optional backbone unfreezing *(tried, then reverted — see below)*
 
-`unfreeze_last_n_blocks` (default `0`) unfreezes the last N DINOv2
+**Update: this feature has been removed from `tdv_wrapper.py`/`train_tdv.py`
+after the Step 6 comparison confirmed it hurt downstream performance
+(32.9% frozen vs. 6.8% unfrozen — see Step 6). The wrapper is back to
+always-frozen-backbone. The rest of this subsection is kept as a record
+of what was tried and why, in case backbone unfreezing is ever revisited
+with more data or a different configuration.**
+
+`unfreeze_last_n_blocks` (default `0`) unfroze the last N DINOv2
 transformer blocks plus the final `norm` layer, on the reasoning that
 clip-identity is baked into frozen DINOv2's features before any training
 touches them (71.8% nearest-centroid clip accuracy on raw DINOv2 CLS vs.
@@ -328,23 +335,30 @@ investigate. `projection_model.py` now defaults to **leave-one-clip-out
 one, repeat for every clip, report mean +/- std. `--val_clips` is available
 for a faster single-fixed-split sanity check.
 
-**Actual result (1 block unfrozen, 7-class task, LOCO CV over 3 clips —
-clip 3 had no valid labels and is excluded, worth double-checking that's
-expected):**
+**Actual result (7-class task, LOCO CV over 3 clips — clip 3 had no valid
+labels and is excluded, worth double-checking that's expected):**
 
 | | held-out clip 0 | held-out clip 1 | held-out clip 2 | mean +/- std |
 |---|---|---|---|---|
-| **TDV** | 2.2% | 18.3% | 0.0% | **6.8% +/- 10.0%** |
-| **MAE** | 45.5% | 28.3% | 12.5% | **28.8% +/- 16.5%** |
+| **TDV (frozen backbone)** | 44.8% | 29.0% | 25.0% | **32.9% +/- 10.5%** |
+| **MAE** | 45.5% | 28.3% | 12.5% | 28.8% +/- 16.5% |
+| **DINOv2 raw (no adapter, no training)** | 22.0% | 18.3% | 0.0% | 13.4% +/- 11.8% |
+| **TDV (1 block unfrozen)** | 2.2% | 18.3% | 0.0% | 6.8% +/- 10.0% |
 | chance (7 classes) | | | | 14.3% |
 
-**What this step achieved, concretely:** under a leak-free split, **MAE
-clearly outperforms TDV**, and TDV performs *below chance* on average
-(0.0% on one held-out clip). This is the opposite of what the earlier
-(leaky) 80/20-split run suggested (TDV: 79.9%). Both numbers are noisy
-given only 3 usable folds — treat "MAE beats TDV, TDV underperforms
-chance" as the working conclusion, not a settled one. See "Where to
-improve TDV" below.
+**What this step actually showed, once the right checkpoint was tested:**
+the initial "TDV underperforms chance" conclusion was an artifact of
+testing the *unfrozen-backbone* checkpoint — the original, frozen-backbone
+TDV recipe performs reasonably, beats the raw-DINOv2-no-training control
+by a wide margin (confirming the adapter+motion-encoder training is doing
+real work), and is directionally at least on par with MAE, possibly
+slightly ahead. The MAE-vs-TDV gap (32.9% vs 28.8%) is well within the
+overlapping std bars on only 3 folds, so "roughly comparable, TDV maybe
+slightly ahead" is the honest read — not a confident win either way.
+**Backbone unfreezing is confirmed harmful, not just neutral**: 32.9% frozen
+vs. 6.8% unfrozen is a ~5x difference on the same data and hyperparameters
+otherwise. Recommendation: keep `unfreeze_blocks=0` (the default) unless a
+specific future experiment gives a clear reason to revisit it.
 
 ---
 
@@ -402,17 +416,19 @@ python eval/visualize_embeddings.py `
 
 ## Where to improve TDV specifically (excluding "collect more data")
 
-1. **Run Step 6 on the original fully-frozen-backbone checkpoint too.**
-   Every downstream number so far comes from the `unfreeze_blocks=1`
-   checkpoint. Not yet established whether unfreezing helped, hurt, or was
-   neutral for the actual task — only that its proxy metrics were
-   flat-to-slightly-worse. Highest-value, lowest-effort next step: rerun a
-   script you already have on a checkpoint you already have.
+Items 1 and 2 below are now done — results are in the Step 6 table above.
+Frozen-backbone TDV clearly beats both the raw-DINOv2 control and the
+unfrozen-backbone variant; it's roughly on par with MAE, maybe slightly
+ahead, but not by a statistically confident margin on 3 folds. Remaining
+items, in order of effort:
 
-2. **Add a raw-DINOv2 (no adapter, no training) control to Step 6.**
-   Extract embeddings directly from frozen, untouched DINOv2 and run the
-   same LOCO CV. Answers whether the adapter is helping, hurting, or
-   irrelevant relative to doing nothing.
+1. ~~Run Step 6 on the original fully-frozen-backbone checkpoint too.~~
+   Done — 32.9% +/- 10.5%, beats both other TDV variants tested.
+
+2. ~~Add a raw-DINOv2 (no adapter, no training) control to Step 6.~~
+   Done — 13.4% +/- 11.8%, confirms the adapter+motion-encoder training is
+   adding real signal over doing nothing, at least for the frozen-backbone
+   configuration.
 
 3. **Consider whether the training objective and eval task are actually
    aligned.** TDV's adapter is optimised purely to make `z_t` useful for
@@ -447,10 +463,17 @@ python eval/visualize_embeddings.py `
 ## Next Steps
 
 **Immediate:**
-- Items 1 and 2 above — needed to interpret the current LOCO result
-  correctly before investing more training runs.
-- Run `eval/visualize_embeddings.py` (Step 7) on the existing embeddings.
-- Fix the `eval/tdv_diagnostics.py` gap noted in Step 6.5.
+- Run `eval/visualize_embeddings.py` (Step 7) on the frozen-backbone TDV
+  embeddings, MAE, and the raw-DINOv2 control — now that frozen TDV is the
+  strongest performer, worth seeing what its 2D structure actually looks
+  like (by label and by clip) rather than only having looked at the
+  broken unfrozen variant.
+- Try item 5 (`adapter_nce_weight` sweep) and/or item 3 (anchor loss) to
+  see if the TDV-vs-MAE gap can be pushed from "roughly comparable" to a
+  confident win.
+- Fix the `eval/tdv_diagnostics.py` gap noted in Step 6.5 (lower priority
+  now that unfreezing is de-prioritized, but still worth doing before
+  anyone revisits backbone unfreezing later).
 
 **Medium term (more data — lower priority until the current
 proxy-metric/downstream-accuracy disconnect is understood):**
