@@ -1,3 +1,4 @@
+
 # MASTERY RARP — MAE Fine-Tuning Project Timeline
 
 ## Overarching Goal
@@ -68,13 +69,18 @@ labels and is excluded from all folds):**
 (chance level for 7 classes: 14.3%)
 
 **What this step achieves:** under the corrected, leak-free split, MAE's
-embeddings clearly beat chance and — see the TDV timeline doc — clearly
-beat TDV's embeddings on the same task (TDV: 6.8% +/- 10.0%, below
-chance). The earlier 80/20-split numbers for both pipelines should be
-considered unreliable and superseded by this result. Note the high
-variance across folds (16.5% std against a 28.8% mean) — with only 3
-usable folds from very unevenly sized clips, this is a noisy estimate;
-more surgical clips (see Next Steps) would tighten it considerably.
+embeddings clearly beat chance. See the TDV timeline doc for the full
+comparison — an initial run there wrongly suggested MAE clearly beat TDV,
+but that used a broken (backbone-unfrozen) TDV checkpoint; against the
+correct frozen-backbone TDV checkpoint (32.9% +/- 10.5%), the two are
+roughly comparable, with TDV directionally slightly ahead but not by a
+statistically confident margin on only 3 folds. The earlier 80/20-split
+numbers for both pipelines should still be considered unreliable and
+superseded by this LOCO result. Note the high variance across folds
+(16.5% std against a 28.8% mean) — with only 3 usable folds from very
+unevenly sized clips, this is a noisy estimate; more surgical clips (see
+Next Steps) would tighten it considerably and could settle which pipeline
+actually comes out ahead.
 
 ---
 
